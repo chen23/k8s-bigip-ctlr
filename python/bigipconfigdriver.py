@@ -37,6 +37,32 @@ from f5_cccl.utils.profile import (delete_unused_ssl_profiles,
                                    create_client_ssl_profile,
                                    create_server_ssl_profile)
 
+def is_active(mgmt,partition):
+    devices = mgmt.tm.cm.devices.get_collection()
+    mydevice = None
+    for device in devices:
+        if mydevice:
+            continue
+        if device.selfDevice == 'true':
+            mydevice = device.name
+
+    folders = mgmt.tm.sys.folders.get_collection()
+    mytrafficgroup = None
+    for folder in folders:
+        if folder.name == partition:
+            mytrafficgroup = folder.trafficGroup
+
+    if mytrafficgroup == 'none' or mytrafficgroup == '/Common/traffic-group-local-only':
+        return True
+
+    resp = mgmt._meta_data['icr_session'].get(mgmt._meta_data['uri'] + 'tm/cm/traffic-group/stats')
+    stats = json.loads(resp.content)
+    for entry in stats['entries']:
+        if mydevice in entry and mytrafficgroup.replace('/','~') in entry:
+            return 'active' ==  stats['entries'][entry]['nestedStats']['entries']['failoverState']['description']
+    return False
+
+
 log = logging.getLogger(__name__)
 console = logging.StreamHandler()
 console.setFormatter(
@@ -326,6 +352,10 @@ class ConfigHandler():
                 incomplete = 0
                 for mgr in self._managers:
                     partition = mgr.get_partition()
+                    active = is_active(self._managers[0].mgmt_root(),partition)
+                    log.debug("is_active: %s" %(active))                                            
+                    if not active:
+                        continue                    
                     cfg_ltm = create_ltm_config(partition, config)
                     try:
                         # Manually create custom profiles;
